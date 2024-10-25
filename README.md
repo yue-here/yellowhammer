@@ -12,8 +12,8 @@ This repository will explore using the Jupyter AI plugin to provide an agentic i
 
 ## Initial development tasks
 
-- [ ] Reproduce the hackathon project with the Jupyter AI plugin, probably by extending the `%%ai` cell magic to something like `%%yellowhammer` that includes the yellowhammer system prompt, and guides through the registration of a *datalab* API key and any provided LLM API keys.
-- [ ] Use yellowhammer to generate API examples for the underlying [*datalab-python-api*](https://github.com/datalab-org/datalab-python-api) package.
+- [x] Reproduce the hackathon project with the Jupyter AI plugin, probably by extending the `%%ai` cell magic to something like `%%yellowhammer` that includes the yellowhammer system prompt, and guides through the registration of a *datalab* API key and any provided LLM API keys.
+- [x] Use yellowhammer to generate API examples for the underlying [*datalab-python-api*](https://github.com/datalab-org/datalab-python-api) package.
 - [ ] Consider deploying this as a JupyterHub that *datalab* instances can link to directly.
 - [ ] Integrate the results much more closely into *datalab* itself, i.e., attaching notebooks to the relevant samples, and recording the provenance of AI generated data recording.
 
