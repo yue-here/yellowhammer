@@ -80,9 +80,9 @@ def get_chain(
         from langchain_anthropic import ChatAnthropic
 
         if api_model is None:
-            # api_model = "claude-3-5-sonnet-20240620"
             # https://docs.anthropic.com/en/docs/about-claude/models#model-names
-            api_model = "claude-3-5-sonnet-latest"
+            # api_model = "claude-3-5-sonnet-latest"
+            api_model = "claude-3-7-sonnet-latest"
         llm = ChatAnthropic(
             model=api_model,
             temperature=api_temperature,
