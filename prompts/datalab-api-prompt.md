@@ -1,17 +1,13 @@
+Datalab consists of a database of "items" which have types such as "sample". Each item contains "blocks" which contain information about the item. Block types are shared across the datalab and described by a JSON schema.
+
 Assume `DATALAB_URL` has been set by an environment variable.
+Assume `DATALAB_API_KEY` have been set an environment variable.
 
 Retrieve the datalab instance URL from the environment variable `DATALAB_URL`.
 The datalab Python API can query entries on a datalab instance at this URL.
-Each method of the DatalabClient class will return a dictionary constructed directly
-from the JSON response of the Datalab API.
-
-Assume `DATALAB_API_KEY` have been set an environment variable.
-
-Datalab uses "data blocks" to take a file attached to a sample, parse it
-according to some scientific schema, and then make a plot.
+Each method of the DatalabClient class will return a dictionary constructed directly from the JSON response of the Datalab API.
 
 The rest of this prompt contains the README for the datalab python API module `datalab_api`, which you already have installed.
-
 
 Python API
 This package implements basic functionality for displaying and manipulating entries:
@@ -19,7 +15,7 @@ This package implements basic functionality for displaying and manipulating entr
 ```python
 from datalab_api import DatalabClient
 
-with DatalabClient(os.getenv('DATALAB_URL')) as client:
+with DatalabClient(<DATALAB_URL>) as client:
 
     # Get the info about this datalab instance
     client.get_info()
@@ -27,8 +23,15 @@ with DatalabClient(os.getenv('DATALAB_URL')) as client:
     # Get the current user's info
     client.authenticate()
 
-    # Search for items with the string
-    items = client.search_items("search-values")
+    # Get information about all available data block types
+    block_list = client.get_block_info()
+
+    # Search for items containing a specific block
+    # (Currently not implemented)
+    items = client.<placeholder_function>()
+
+    # Search for items using free text
+    items = client.search_items("search string")
 
     # List all items of a given type
     # Types can be 'samples' or 'starting_materials'
@@ -56,8 +59,48 @@ with DatalabClient(os.getenv('DATALAB_URL')) as client:
 
 ```
 
-Here is an abridged JSONSchema for a sample, that also has some info about other
-types.
+If you are asked to provide information about the blocks associated with this datalab, you can use client.get_block_info() to return a list of block schema definitions in JSON format.
+
+Each block schema JSON has the following structure:
+    attributes: Contains key details about the block.
+        accepted_file_extensions: Specifies a list of file extensions the block can process. If the block does not support files, this is empty or null.
+        description: A brief description of what the block does.
+        name: The name of the block, indicating its purpose.
+        version: The version number of the block.
+    id: A unique identifier for the block.
+    type: Specifies the general category or type of the block.
+
+An example of a block instance:
+{
+    "attributes": {
+        "accepted_file_extensions": [".txt", ".wdf"],
+        "description": "Visualize 1D Raman spectroscopy data.",
+        "name": "Raman spectroscopy",
+        "version": "0.1.0"
+    },
+    "id": "raman",
+    "type": "block_type"
+}
+
+You may need to combine block searching with item searching. For example, `items = client.get_items(item_type="samples")` will retrieve a list of `sample` time instances in dict format. You can then search for samples containing blocks within these results by checking for 'nblocks' and 'blocks'. Use the `client.get_items()` output for search if possible.
+
+An example of a sample instance:
+{
+    'blocks': [{'blocktype': 'media', 'title': 'Media'},
+               {'blocktype': 'xrd', 'title': 'Powder XRD'}],
+    'chemform': 'LiNixMnyCozO2',
+    'collections': [],
+    'creators': [{'contact_email': 'researcher@institution.edu',
+                 'display_name': 'researcher@institution.edu'}],
+    'date': 'YYYY-MM-DDThh:mm:ss',
+    'item_id': 'cathode_material_e1',
+    'name': 'Cathode material electrode films',
+    'nblocks': 2,
+    'refcode': 'demo:XXXXXX'
+    'type': 'samples'
+}
+
+To help you work with items, here is an example of a JSON schema for a sample (a type of item). This information is retrieved by `client.get_item`. Use this as a reference if you need to manipulate item information in detail.
 
 ```json
 {

@@ -1,6 +1,6 @@
 """
 Magics to support LLM interactions in IPython/Jupyter.
-Adapted from fperez/jupytee and jan-janssen/LangSim.
+Inspired by fperez/jupytee and jan-janssen/LangSim.
 """
 
 import os
