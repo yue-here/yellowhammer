@@ -6,6 +6,7 @@ Inspired by fperez/jupytee and jan-janssen/LangSim.
 import os
 import re
 import base64
+import pprint
 
 from IPython import get_ipython
 from IPython.core.magic import (
@@ -19,35 +20,13 @@ from IPython.core.magic_arguments import (
     parse_argstring,
 )
 from IPython.display import Markdown
-from langchain_core.prompts import ChatPromptTemplate
-from .llm import get_chain, Code, ConversationalResponse
+# from langchain_core.prompts import ChatPromptTemplate
+from datalab_api import DatalabClient
+from .llm_pydantic import datalab_agent, Deps
 from .prompt import API_PROMPT, SYSTEM_PROMPT
-
-
-def get_output(messages, image_dict, temp=0.1):
-    """
-    Send current message list to LLM and return the response
-    """
-
-    env = os.environ
-
-    # Convert list of tuples to ChatPromptTemplate
-    messages = ChatPromptTemplate(messages)
-
-    agent_executor = get_chain(
-        messages=messages,
-        api_provider=env.get("LLM_PROVIDER", "OPENAI"),
-        api_key=env.get("LLM_API_KEY"),
-        api_model=env.get("LLM_MODEL", None),
-        api_temperature=env.get("LLM_TEMP", temp),
-    )
-
-    # Add image data to LLM input as key-value pairs
-    args = {"context": API_PROMPT}
-    args.update(image_dict)
-
-    return agent_executor.invoke(args)
-
+import asyncio
+import nest_asyncio
+nest_asyncio.apply()
 
 def parse_paths(input_string):
     # A simple regex pattern to match file-path-like substrings:
@@ -67,36 +46,33 @@ def parse_paths(input_string):
 
     return {"text": remaining_text, "paths": paths}
 
-
 # Class to manage state and expose the main magics
 @magics_class
 class DatalabMagics(Magics):
     def __init__(self, shell):
         super().__init__(shell)
 
-        self.messages = [
-            ("system", SYSTEM_PROMPT),
-        ]  # Initialize with system prompt.
-        self.images = []  # Initialize with empty list of images.
+        self.messages = None
+        # self.images = []  # Initialize with empty list of images.
 
     # A datalab magic that returns a code block
     @magic_arguments()
     @argument(
         "prompt",
         nargs="*",
-        help="""Prompt for code generation. When used as a line magic,
+        help="""LLM prompt. When used as a line magic,
         it runs to the end of the line. In cell mode, the entire cell
         is considered the code generation prompt.
         """,
     )
-    @argument(
-        "-T",
-        "--temp",
-        type=float,
-        default=0.1,
-        help="""Temperature, float in [0,1]. Higher values push the algorithm
-        to generate more aggressive/"creative" output. [default=0.1].""",
-    )
+    # @argument(
+    #     "-T",
+    #     "--temp",
+    #     type=float,
+    #     default=0.1,
+    #     help="""Temperature, float in [0,1]. Higher values push the algorithm
+    #     to generate more aggressive/"creative" output. [default=0.1].""",
+    # )
     @line_cell_magic
     def llm(self, line, cell=None):
         """
@@ -113,85 +89,46 @@ class DatalabMagics(Magics):
         prompt_text = prompt["text"]
         paths = prompt["paths"]  # TODO implement check or make parser only output local paths
 
-        # Add the text component of prompt to the message list
-        self.messages.append(("human", prompt_text))
+        # Run the datalab agent
+        response = datalab_agent.run_sync(
+            prompt_text,
+            deps=Deps(
+            DatalabClient,
+            os.getenv("DATALAB_API_KEY"),
+            os.getenv("DATALAB_URL"),
+            ),
+            message_history=self.messages,
+        )
 
-        # Add the image components of the query if found
-        if paths:
-            for path in enumerate(paths):
-                # first get the image data
-                try:
-                    with open(path[1], "rb") as image_file:
-                        image_data = base64.b64encode(image_file.read()).decode("utf-8")
-                    # append image to the list of images
-                    self.images.append(image_data)
+        self.messages = response.all_messages()
 
-                    # generate variable name "image_n" and inject it into a message
-                    image_variable_name = f"image_{len(self.images)}"
-                    image_message = [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{{{image_variable_name}}}"
-                            },
-                        }
-                    ]
-                    self.messages.append(("human", image_message))
-                except FileNotFoundError:
-                    print(f"Error: Could not read image file {path[1]}")
-                    pass
-
-                # Add the image message to the message list
-
-        # Create a dict from self.images to pass the image data to langchain
-        image_dict = {f"image_{i+1}": image for i, image in enumerate(self.images)}
-
-        # Get the output from the LLM
-        response = get_output(messages=self.messages, image_dict=image_dict).final_output
-
-        # Add LLM response to the message list
-        if isinstance(response, ConversationalResponse):
-            output = response.response
-            self.messages.append(("ai", output))
-            return Markdown(output)
-
-        elif isinstance(response, Code):
-            output = response
-            self.messages.append(("ai", output.prefix))
-            cell_fill = output.imports + "\n" + output.code
+        # Output text and code
+        if hasattr(response.data, 'code'):
+            cell_fill = response.data.code
             get_ipython().set_next_input(cell_fill)
-            return Markdown(output.prefix)
 
-    @line_cell_magic
-    def chat(self, line, cell=None):
-        """
-        Live chat with LLM
-        """
-        while True:
-            user_input = input("User: ")
-            # print(f'User: {user_input}')
+        if hasattr(response.data, 'text'):
+            usage = pprint.pformat(response.usage())
+            return Markdown(response.data.text + "\n" + usage)
+        
+        return "Unable to generate response."
 
-            if user_input.lower() in ["quit", "exit", "q"]:
-                print("Goodbye!")
-                break
+        #             # generate variable name "image_n" and inject it into a message
+        #             image_variable_name = f"image_{len(self.images)}"
+        #             image_message = [
+        #                 {
+        #                     "type": "image_url",
+        #                     "image_url": {
+        #                         "url": f"data:image/jpeg;base64,{{{image_variable_name}}}"
+        #                     },
+        #                 }
+        #             ]
+        #             self.messages.append(("human", image_message))
+        #         except FileNotFoundError:
+        #             print(f"Error: Could not read image file {path[1]}")
+        #             pass
 
-            self.messages.append(("human", user_input))
-            response = get_output(self.messages).final_output
+        #         # Add the image message to the message list
 
-            if isinstance(response, ConversationalResponse):
-                output = response.response
-                self.messages.append(("ai", output))
-                print(f"Assistant: {output}\n")
-
-            elif isinstance(response, Code):
-                output = response
-                self.messages.append(("ai", output.prefix))
-                cell_fill = output.imports + "\n" + output.code
-                print(f"Assistant: {output.prefix}")
-                get_ipython().set_next_input(cell_fill)
-                break
-
-
-# If testing interactively, it's convenient to %run as a script in Jupyter
-if __name__ == "__main__":
-    get_ipython().register_magics(DatalabMagics)
+        # # Create a dict from self.images to pass the image data to langchain
+        # image_dict = {f"image_{i+1}": image for i, image in enumerate(self.images)}

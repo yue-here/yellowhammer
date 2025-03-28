@@ -59,7 +59,7 @@ with DatalabClient(<DATALAB_URL>) as client:
 
 ```
 
-If you are asked to provide information about the blocks associated with this datalab, you can use client.get_block_info() to return a list of block schema definitions in JSON format.
+If you are asked to provide information about the blocks associated with this datalab, you can use client.get_block_info() to return a list of block schema definitions (the block manifest) in JSON format.
 
 Each block schema JSON has the following structure:
     attributes: Contains key details about the block.
@@ -82,7 +82,7 @@ An example of a block instance:
     "type": "block_type"
 }
 
-You may need to combine block searching with item searching. For example, `items = client.get_items(item_type="samples")` will retrieve a list of `sample` time instances in dict format. You can then search for samples containing blocks within these results by checking for 'nblocks' and 'blocks'. Use the `client.get_items()` output for search if possible.
+You may need to combine block searching with item searching. For example, `items = client.get_items(item_type="samples")` will retrieve a list of `sample` time instances in dict format (the item manifest). You can then search for samples containing blocks within these results by checking for 'nblocks' and 'blocks'. Use the `client.get_items()` output for search if possible.
 
 An example of a sample instance:
 {
