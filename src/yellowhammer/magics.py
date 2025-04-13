@@ -8,6 +8,15 @@ import re
 import base64
 import pprint
 
+# Configure Logfire if token is available
+try:
+    import logfire
+    logfire_token = os.getenv("LOGFIRE_TOKEN")
+    if logfire_token:
+        logfire.configure(token=logfire_token)
+except ImportError:
+    pass  # Logfire is optional
+
 from IPython import get_ipython
 from IPython.core.magic import (
     Magics,
@@ -19,13 +28,22 @@ from IPython.core.magic_arguments import (
     argument,
     parse_argstring,
 )
-from IPython.display import Markdown
+from IPython.display import Markdown, HTML
 # from langchain_core.prompts import ChatPromptTemplate
 from datalab_api import DatalabClient
 from .llm_pydantic import datalab_agent, Deps
 from .prompt import API_PROMPT, SYSTEM_PROMPT
 import asyncio
 import nest_asyncio
+import pprint
+import rich
+from rich.console import Console
+from rich.markdown import Markdown as RichMarkdown
+from rich.syntax import Syntax
+from rich.panel import Panel
+from rich.box import ROUNDED
+from io import StringIO
+
 nest_asyncio.apply()
 
 def parse_paths(input_string):
@@ -65,14 +83,14 @@ class DatalabMagics(Magics):
         is considered the code generation prompt.
         """,
     )
-    # @argument(
-    #     "-T",
-    #     "--temp",
-    #     type=float,
-    #     default=0.1,
-    #     help="""Temperature, float in [0,1]. Higher values push the algorithm
-    #     to generate more aggressive/"creative" output. [default=0.1].""",
-    # )
+    @argument(
+        "-T",
+        "--temp",
+        type=float,
+        default=0.1,
+        help="""Temperature, float in [0,1]. Higher values push the algorithm
+        to generate more aggressive/"creative" output. [default=0.1].""",
+    )
     @line_cell_magic
     def llm(self, line, cell=None):
         """
@@ -93,25 +111,34 @@ class DatalabMagics(Magics):
         response = datalab_agent.run_sync(
             prompt_text,
             deps=Deps(
-            DatalabClient,
-            os.getenv("DATALAB_API_KEY"),
-            os.getenv("DATALAB_URL"),
-            ),
+                DatalabClient,
+                os.getenv("DATALAB_API_KEY"),
+                os.getenv("DATALAB_URL"),
+                ),
             message_history=self.messages,
+            model_settings={'temperature': args.temp},
         )
 
         self.messages = response.all_messages()
 
-        # Output text and code
+        if hasattr(response.data, 'text'):
+            # Create a string IO to capture Rich console output
+            console_output = StringIO()
+            console = Console(file=console_output, width=120, highlight=True)
+            
+            # Format main response text with Rich Markdown
+            console.print(RichMarkdown(response.data.text))
+            
+            # Add usage info in a panel with syntax highlighting
+            usage_str = pprint.pformat(response.usage())
+            usage_syntax = Syntax(usage_str, "python", theme="monokai", word_wrap=True)
+            console.print(Panel(usage_syntax, title="Usage Information", border_style="blue", box=ROUNDED))
+            
+        # Output code into next cell
         if hasattr(response.data, 'code'):
             cell_fill = response.data.code
             get_ipython().set_next_input(cell_fill)
 
-        if hasattr(response.data, 'text'):
-            usage = pprint.pformat(response.usage())
-            return Markdown(response.data.text + "\n" + usage)
-        
-        return "Unable to generate response."
 
         #             # generate variable name "image_n" and inject it into a message
         #             image_variable_name = f"image_{len(self.images)}"

@@ -14,6 +14,10 @@ API_PROMPT = load_file_content(api_prompt_path)
 system_prompt_path = Path(__file__).parent.parent.parent / "prompts" / "system-prompt.md"
 SYSTEM_PROMPT = load_file_content(system_prompt_path)
 
+# Load CODE_PROMPT
+code_prompt_path = Path(__file__).parent.parent.parent / "prompts" / "code-prompt.md"
+CODE_PROMPT = load_file_content(code_prompt_path)
+
 if __name__ == "__main__":
     print(SYSTEM_PROMPT)
     print(API_PROMPT)

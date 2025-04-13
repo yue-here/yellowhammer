@@ -11,8 +11,9 @@ from typing_extensions import TypeAlias
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.models import KnownModelName
-from .prompt import API_PROMPT, SYSTEM_PROMPT
-
+from .prompt import API_PROMPT, SYSTEM_PROMPT, CODE_PROMPT
+from .fulltext_search import FullTextSearchTool
+from .utils import process_item_for_chat
 
 # Dependencies
 @dataclass
@@ -21,9 +22,11 @@ class Deps:
     datalab_api_key: str | None
     datalab_url: str | None
     item_manifest: dict[str, Any] | None = None
-    block_manifest: dict[str, Any] | None = None
+    # block_manifest: dict[str, Any] | None = None
     item_search_id_buffer: dict[str, Any] | None = None
     items_buffer: dict[str, Any] | None = None
+    search_buffer: list[dict] | None = None
+    search_tool: FullTextSearchTool | None = None
 
 # Output schemas
 class TextResponse(BaseModel):
@@ -43,7 +46,8 @@ datalab_agent = Agent(
     system_prompt=SYSTEM_PROMPT.format(API_PROMPT), # TODO: fix prompts
     result_type=Response,
     deps_type=Deps,
-    retries=2
+    retries=2,
+    instrument=True,
 )
 
 # Define tools
@@ -65,27 +69,29 @@ async def get_items(ctx: RunContext[Deps], item_type: str) -> str:
         with ctx.deps.client(ctx.deps.datalab_url) as client:
             item_type = "samples"
             ctx.deps.item_manifest = client.get_items(item_type=item_type)
+            # Initialize the search tool with the fetched items
+            ctx.deps.search_tool = FullTextSearchTool(ctx.deps.item_manifest)
             return "Items retrieved."
         
     # Set 2 retries in decorator to prevent looping
     raise ModelRetry('No data returned, try again.')
 
 
-@datalab_agent.tool
-async def inspect_blocks(ctx: RunContext[Deps]) -> str:
-    """Inspect retrieved blocks in the block manifest.
-    """
+# @datalab_agent.tool
+# async def inspect_blocks(ctx: RunContext[Deps]) -> str:
+#     """Inspect retrieved blocks in the block manifest.
+#     """
 
-    if ctx.deps.block_manifest == None:
-        with ctx.deps.client(ctx.deps.datalab_url) as client:
-            ctx.deps.block_manifest = client.get_block_info
+#     if ctx.deps.block_manifest == None:
+#         with ctx.deps.client(ctx.deps.datalab_url) as client:
+#             ctx.deps.block_manifest = client.get_block_info
     
-    # Blocks buffer to plaintext
-    blocks_buffer = json.dumps(ctx.deps.block_manifest, indent=2)
+#     # Blocks buffer to plaintext
+#     blocks_buffer = json.dumps(ctx.deps.block_manifest, indent=2)
     
-    r = await datalab_agent.run(blocks_buffer, deps=ctx.deps)
+#     r = await datalab_agent.run(blocks_buffer, deps=ctx.deps)
     
-    return r.data
+#     return r.data
 
 # # Tool to identify blocks present in the current datalab - may not be necessary
 # @datalab_agent.tool
@@ -114,71 +120,77 @@ async def inspect_blocks(ctx: RunContext[Deps]) -> str:
 #         return {'error': 'Queried block not found.'}
     
 # Helper function to search through nested dicts/lists (the item manifest)
-def _search_nested(obj, query, case_sensitive=False):
-    """Recursively search through nested dictionaries and lists for a query.
+# def _search_nested(obj, query, case_sensitive=False):
+#     """Recursively search through nested dictionaries and lists for a query.
     
-    Args:
-        obj: The object to search (dict, list, or primitive value)
-        query: The string to search for
-        case_sensitive: Whether the search should be case-sensitive
+#     Args:
+#         obj: The object to search (dict, list, or primitive value)
+#         query: The string to search for
+#         case_sensitive: Whether the search should be case-sensitive
         
-    Returns:
-        bool: True if the query was found, False otherwise
-    """
-    if isinstance(obj, dict):
-        # Look through all keys and values
-        return any(_search_nested(k, query, case_sensitive) for k in obj.keys()) or \
-               any(_search_nested(v, query, case_sensitive) for v in obj.values())
-    elif isinstance(obj, list):
-        # Look through all items in the list
-        return any(_search_nested(item, query, case_sensitive) for item in obj)
-    elif isinstance(obj, str):
-        # String comparison
-        if case_sensitive:
-            return query in obj
-        else:
-            return query.lower() in obj.lower()
-    elif obj is not None:
-        # For numbers or other types, convert to string and check
-        return str(query) == str(obj)
-    return False
+#     Returns:
+#         bool: True if the query was found, False otherwise
+#     """
+#     if isinstance(obj, dict):
+#         # Look through all keys and values
+#         return any(_search_nested(k, query, case_sensitive) for k in obj.keys()) or \
+#                any(_search_nested(v, query, case_sensitive) for v in obj.values())
+#     elif isinstance(obj, list):
+#         # Look through all items in the list
+#         return any(_search_nested(item, query, case_sensitive) for item in obj)
+#     elif isinstance(obj, str):
+#         # String comparison
+#         if case_sensitive:
+#             return query in obj
+#         else:
+#             return query.lower() in obj.lower()
+#     elif obj is not None:
+#         # For numbers or other types, convert to string and check
+#         return str(query) == str(obj)
+#     return False
 
 # Tool to query item manifest if it exists
 @datalab_agent.tool
 async def item_query(ctx: RunContext[Deps], query: str) -> list[dict[str, Any]]:
-    """Use the datalab search function to search through the item manifest at all nesting levels.
-    Generates a list of item_ids that can be used with get_item_details.
+    """Use full-text search to find items matching your query.
+    This searches through all fields in the item manifest including nested data.
     
     Args:
-        query: Search string to find in any field at any nesting level.
+        query: Keyword query string (e.g., "John Doe Fe3O4")
 
     Returns:
         List of dictionaries each representing one matching item
     """
     if ctx.deps.item_manifest is None:
         return {'error': 'Use get_items to generate items list first'}
-        
-    # Search all items, looking at all levels of nesting
-    matching_items = [
-        item for item in ctx.deps.item_manifest 
-        if _search_nested(item, query)
-    ]
+    
+    # Initialize search tool if not already done
+    if ctx.deps.search_tool is None:
+        ctx.deps.search_tool = FullTextSearchTool(ctx.deps.item_manifest)
+    
+    # Perform the search using the FullTextSearchTool
+    matching_items = ctx.deps.search_tool.natural_language_search(query)
     
     if matching_items:
+        # store the query in the search buffer
+        ctx.deps.search_buffer = matching_items
+
+        # Store the item IDs in the buffer for get_item_details
         ctx.deps.item_search_id_buffer = [item.get('item_id') for item in matching_items if 'item_id' in item]
-        return matching_items
+        
+        return f'Retrieved {len(matching_items)} items matching {query}'
     else:
-        return {'error': f'No items found containing "{query}"'}
+        return {'error': f'No items found matching query: "{query}"'}
 
 # Tool to make get_item API calls on item search id buffer
 @datalab_agent.tool
-async def get_item_details(ctx: RunContext[Deps]) -> dict[str, Any]:
+async def get_item_details(ctx: RunContext[Deps], simplify_JSON:bool = True) -> dict[str, Any]:
     """Use the datalab get_item function to get details JSONs of specific items in the manifest.
     This function reads a list of item_ids and retrieves the corresponding items using the datalab API.
     item_query must be run first to generate the item search id buffer.
     """
     if ctx.deps.item_search_id_buffer == None:
-        return {'error': 'No item search buffer found, run item_query first.'}
+        return {'error': 'No search id buffer found, run item_query first.'}
     
     if ctx.deps.items_buffer == None:
         ctx.deps.items_buffer = {}
@@ -186,6 +198,9 @@ async def get_item_details(ctx: RunContext[Deps]) -> dict[str, Any]:
     with ctx.deps.client(ctx.deps.datalab_url) as client:
         for item_id in ctx.deps.item_search_id_buffer:
             item = client.get_item(item_id=item_id)
+            
+            if simplify_JSON:
+                item = process_item_for_chat(item)
             ctx.deps.items_buffer[item_id] = item
         return "Items retrieved."
     
@@ -193,21 +208,56 @@ async def get_item_details(ctx: RunContext[Deps]) -> dict[str, Any]:
 
 # Ask agent to inspect items in the items buffer
 @datalab_agent.tool
-async def inspect_items(ctx: RunContext[Deps]) -> str:
-    """Inspect retrieved items in the items buffer.
-    Only use this if the items buffer has been populated with get_item_details!
+async def inspect_items(ctx: RunContext[Deps], prompt: str) -> str:
     """
+    If search item details have been successfully retrieved with a get_item_details call,
+    this tool uses an LLM agent to inspect these items. Prompt this agent based on the user's request.
+    The user does not see this tool's response so incorporate outputs into your final repsonse to the user. 
 
+    Args:
+        prompt: A system prompt for the inspection agent
+    """
     if ctx.deps.items_buffer == None:
         return {'error': 'No items buffer found, run get_item_details first.'}
 
     # Items buffer to plaintext
-    items_buffer = json.dumps(ctx.deps.items_buffer, indent=2)
+    items_buffer = json.dumps(ctx.deps.items_buffer, separators=(',', ':'))
     
-    r = await datalab_agent.run(items_buffer, deps=ctx.deps)
+    # Create an agent to inspect the items
+    inspection_agent = Agent(model, system_prompt=prompt, instrument=True)
+    r = await inspection_agent.run(items_buffer, deps=ctx.deps)
     
     return r.data
 
+# Add the inspect_query function after inspect_items
+@datalab_agent.tool
+async def inspect_query(ctx: RunContext[Deps], prompt: str) -> str:
+    """
+    If a search query has been successfully run with a item_query call,
+    this tool uses an LLM agent to inspect the search buffer. Prompt this agent based on the user's request.
+    item_query must be run first to generate the search buffer.
+
+    Args:
+        prompt: A system prompt for the inspection agent
+    """
+    if ctx.deps.search_buffer == None:
+        return {'error': 'No search buffer found, run item_query first.'}
+    # Search buffer to plaintext
+    search_buffer = json.dumps(ctx.deps.search_buffer, separators=(',', ':'))
+    inspection_agent = Agent(model, system_prompt=prompt, instrument=True)
+    result = await inspection_agent.run(search_buffer, deps=ctx.deps)
+    return result.data
+
+@datalab_agent.tool
+async def code_writer(ctx: RunContext[Deps], prompt: str) -> Response:
+    """
+    This tool is used to write code based on a prompt. It has information about the datalab API syntax.
+    Args:
+        prompt: A system prompt for the code writer agent 
+    """
+    code_agent = Agent(model, result_type = Response, system_prompt=CODE_PROMPT, instrument=True)
+    result = await code_agent.run(prompt, deps=ctx.deps)
+    return result.data
 
 # Validation may be helpful for some outputs
 # @datalab_agent.result_validator
