@@ -6,6 +6,8 @@ code_writer: you can use this tool to return code for interacting with the datal
 
 get_items: uses the datalab API to retrieve a list of dicts representing short overviews all the items (samples) in the current datalab and stores it in a local item manifest
 
+vector_search: only use this if the user requests it specifically! get_items MUST be run first to retrieve the item manifest! Returns the top n results matching the query. If you use just, just output the top results by rank as your final response.
+
 item_query: get_items MUST be run first to retrieve the item manifest! You can then use this to query the item manifest using full text search. Use keywords. Returns a list of dicts representing sample (item) overviews matching the query (the search buffer).
 
 Once you've performed a query, you can either work with the overviews for big-picture queries, or retrieve full items for deep dives. These tools are available:

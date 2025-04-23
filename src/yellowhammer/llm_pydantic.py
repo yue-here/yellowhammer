@@ -1,7 +1,9 @@
 import os
 import json
+import chromadb
 from typing import Any, cast
 from dataclasses import dataclass
+from datetime import date
 
 from datalab_api import DatalabClient
 
@@ -11,9 +13,10 @@ from typing_extensions import TypeAlias
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.models import KnownModelName
-from .prompt import API_PROMPT, SYSTEM_PROMPT, CODE_PROMPT
+from .prompt import API_PROMPT, SYSTEM_PROMPT, CODE_PROMPT, INGEST_PROMPT
 from .fulltext_search import FullTextSearchTool
 from .utils import process_item_for_chat
+from pydantic import BaseModel, Field, ConfigDict
 
 # Dependencies
 @dataclass
@@ -225,9 +228,9 @@ async def inspect_items(ctx: RunContext[Deps], prompt: str) -> str:
     
     # Create an agent to inspect the items
     inspection_agent = Agent(model, system_prompt=prompt, instrument=True)
-    r = await inspection_agent.run(items_buffer, deps=ctx.deps)
+    result = await inspection_agent.run(items_buffer, deps=ctx.deps)
     
-    return r.data
+    return result.data
 
 # Add the inspect_query function after inspect_items
 @datalab_agent.tool
@@ -259,7 +262,148 @@ async def code_writer(ctx: RunContext[Deps], prompt: str) -> Response:
     result = await code_agent.run(prompt, deps=ctx.deps)
     return result.data
 
-# Validation may be helpful for some outputs
-# @datalab_agent.result_validator
-# async def validate_result(ctx: RunContext[Deps], result: Response) -> Response:
-#     # Do some validation here
+@datalab_agent.tool
+async def vector_search(ctx: RunContext[Deps], query: str, n_results: int = 5) -> str:
+    """Use chromadb to perform a vector search on the item manifest.
+    
+    Args:
+        query: A string to search for in the item manifest
+        n_results: Number of top results to return (default: 5)
+        
+    Returns:
+        String confirmation with number of results found
+    """
+    if ctx.deps.item_manifest is None:
+        return {'error': 'Use get_items to generate items list first'}
+    
+    # Initialize the Chroma client (in-memory)
+    client = chromadb.Client()
+    
+    # Create or get the collection
+    try:
+        collection = client.get_collection("items")
+    except:
+        collection = client.create_collection("items")
+    
+    # Extract item IDs and text content from the manifest
+    item_ids = []
+    documents = []
+    
+    for item in ctx.deps.item_manifest:
+        item_id = str(item.get('item_id', ''))
+        if not item_id:
+            continue
+            
+        # Convert the item to a string representation for the document
+        item_text = json.dumps(item, ensure_ascii=False)
+        
+        item_ids.append(item_id)
+        documents.append(item_text)
+    
+    # Add items to the collection if there are any valid items
+    if item_ids and documents:
+        collection.add(
+            ids=item_ids,
+            documents=documents
+        )
+    
+    # Perform a vector search
+    results = collection.query(
+        query_texts=[query],
+        n_results=min(n_results, len(item_ids))
+    )
+    
+    if not results or not results['ids'][0]:
+        return {'error': f'No items found matching query: "{query}"'}
+    
+    # Get the matching item IDs
+    matching_ids = results['ids'][0]
+    
+    # Store results in buffers for further processing
+    matching_items = [item for item in ctx.deps.item_manifest 
+                     if str(item.get('item_id', '')) in matching_ids]
+    
+    # Store the results in the search buffer
+    ctx.deps.search_buffer = matching_items
+    
+    # Store the item IDs in the buffer for get_item_details
+    ctx.deps.item_search_id_buffer = [item.get('item_id') for item in matching_items if 'item_id' in item]
+    
+    return f'Retrieved {len(matching_items)} items matching vector search for "{query}"'
+
+# Separate agent to ingest items
+ingestion_agent = Agent(
+    model,
+    system_prompt=INGEST_PROMPT.format(date.today()),
+    result_type=Response,
+    deps_type=Deps,
+    retries=2,
+    instrument=True,
+)
+
+class CreateItemInput(BaseModel):
+    item_id: str = Field(description="A short identifier for the item")
+    # item_type: str = Field(description="The type of the item") # default to 'samples'
+    name: str = Field(description="The name of the item")
+    chemform: str = Field(description="The chemical form of the item")
+    date: str = Field(description="Date of item creation, ISO formatted (YYYY-MM-DD)")
+    file: str = Field(description="File path to the associated file, if specified")
+
+
+@ingestion_agent.tool
+async def create_item(ctx: RunContext[Deps], inputs: CreateItemInput) -> str:
+    """
+    Use the datalab client to create a new datalab item.
+    """
+    if ctx.deps.datalab_api_key is None:
+        return {'error': 'No datalab API key found.'}
+    
+    if ctx.deps.datalab_url is None:
+        return {'error': 'No datalab URL found.'}
+
+    with ctx.deps.client(ctx.deps.datalab_url) as client:
+        sample_dict = {
+            "name": inputs.name,
+            "chemform": inputs.chemform,
+            "date": inputs.date,
+        }
+        try:
+            created = client.create_item(
+                item_id=inputs.item_id,
+                item_type="samples",
+                item_data=sample_dict
+            )
+            
+            created_item_id = created["item_id"]
+
+            if inputs.file:
+                # Check if the file exists
+                if not os.path.exists(inputs.file):
+                    return {'error': f'Item {inputs.item_id} created but cannot find file {inputs.file}'}
+                
+                try:
+                    client.upload_file(
+                        item_id=created_item_id, file_path=inputs.file
+                    )
+                except Exception as e:
+                    return {'error': f'Item {inputs.item_id} created but file upload failed: {str(e)}'}
+            
+            return f"Item {inputs.item_id} created successfully with ID {created_item_id}."
+
+        except Exception as e:
+            return {'error': f'Error creating item: {str(e)}'}
+
+
+@datalab_agent.tool
+async def item_creator(ctx: RunContext[Deps], prompt: str) -> str:
+    """
+    This tool is used to create a new item in the datalab. 
+    It uses an agent to create an item specified by natural language.
+    
+    Args:
+        str: A system prompt for the item creation agent
+    """
+    # Create an agent to create the item
+    result = await ingestion_agent.run(prompt, deps=ctx.deps)
+
+    return result.data

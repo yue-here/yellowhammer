@@ -103,13 +103,13 @@ class DatalabMagics(Magics):
             prompt = " ".join(args.prompt)
         else:
             prompt = cell
-        prompt = parse_paths(prompt)
-        prompt_text = prompt["text"]
-        paths = prompt["paths"]  # TODO implement check or make parser only output local paths
+        # prompt = parse_paths(prompt)
+        # prompt_text = prompt["text"]
+        # paths = prompt["paths"]  # TODO implement check or make parser only output local paths
 
         # Run the datalab agent
         response = datalab_agent.run_sync(
-            prompt_text,
+            prompt,
             deps=Deps(
                 DatalabClient,
                 os.getenv("DATALAB_API_KEY"),
