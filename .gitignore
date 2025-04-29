@@ -173,3 +173,5 @@ examples/HL1-5_5-90_30min.xrdml
 # examples/IMG_1648.jpg
 prompts/deprecated
 examples/llm_trace.txt
+examples/Demo_anthropic.ipynb
+examples/Demo_openai.ipynb
