@@ -175,3 +175,4 @@ prompts/deprecated
 examples/llm_trace.txt
 examples/Demo_anthropic.ipynb
 examples/Demo_openai.ipynb
+examples/Demo_pydantic copy.ipynb

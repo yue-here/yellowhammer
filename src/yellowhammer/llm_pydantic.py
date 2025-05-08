@@ -262,74 +262,75 @@ async def code_writer(ctx: RunContext[Deps], prompt: str) -> Response:
     result = await code_agent.run(prompt, deps=ctx.deps)
     return result.data
 
-@datalab_agent.tool
-async def vector_search(ctx: RunContext[Deps], query: str, n_results: int = 5) -> str:
-    """Use chromadb to perform a vector search on the item manifest.
+# Requires further development
+# @datalab_agent.tool
+# async def vector_search(ctx: RunContext[Deps], query: str, n_results: int = 5) -> str:
+#     """Use chromadb to perform a vector search on the item manifest.
     
-    Args:
-        query: A string to search for in the item manifest
-        n_results: Number of top results to return (default: 5)
+#     Args:
+#         query: A string to search for in the item manifest
+#         n_results: Number of top results to return (default: 5)
         
-    Returns:
-        String confirmation with number of results found
-    """
-    if ctx.deps.item_manifest is None:
-        return {'error': 'Use get_items to generate items list first'}
+#     Returns:
+#         String confirmation with number of results found
+#     """
+#     if ctx.deps.item_manifest is None:
+#         return {'error': 'Use get_items to generate items list first'}
     
-    # Initialize the Chroma client (in-memory)
-    client = chromadb.Client()
+#     # Initialize the Chroma client (in-memory)
+#     client = chromadb.Client()
     
-    # Create or get the collection
-    try:
-        collection = client.get_collection("items")
-    except:
-        collection = client.create_collection("items")
+#     # Create or get the collection
+#     try:
+#         collection = client.get_collection("items")
+#     except:
+#         collection = client.create_collection("items")
     
-    # Extract item IDs and text content from the manifest
-    item_ids = []
-    documents = []
+#     # Extract item IDs and text content from the manifest
+#     item_ids = []
+#     documents = []
     
-    for item in ctx.deps.item_manifest:
-        item_id = str(item.get('item_id', ''))
-        if not item_id:
-            continue
+#     for item in ctx.deps.item_manifest:
+#         item_id = str(item.get('item_id', ''))
+#         if not item_id:
+#             continue
             
-        # Convert the item to a string representation for the document
-        item_text = json.dumps(item, ensure_ascii=False)
+#         # Convert the item to a string representation for the document
+#         item_text = json.dumps(item, ensure_ascii=False)
         
-        item_ids.append(item_id)
-        documents.append(item_text)
+#         item_ids.append(item_id)
+#         documents.append(item_text)
     
-    # Add items to the collection if there are any valid items
-    if item_ids and documents:
-        collection.add(
-            ids=item_ids,
-            documents=documents
-        )
+#     # Add items to the collection if there are any valid items
+#     if item_ids and documents:
+#         collection.add(
+#             ids=item_ids,
+#             documents=documents
+#         )
     
-    # Perform a vector search
-    results = collection.query(
-        query_texts=[query],
-        n_results=min(n_results, len(item_ids))
-    )
+#     # Perform a vector search
+#     results = collection.query(
+#         query_texts=[query],
+#         n_results=min(n_results, len(item_ids))
+#     )
     
-    if not results or not results['ids'][0]:
-        return {'error': f'No items found matching query: "{query}"'}
+#     if not results or not results['ids'][0]:
+#         return {'error': f'No items found matching query: "{query}"'}
     
-    # Get the matching item IDs
-    matching_ids = results['ids'][0]
+#     # Get the matching item IDs
+#     matching_ids = results['ids'][0]
     
-    # Store results in buffers for further processing
-    matching_items = [item for item in ctx.deps.item_manifest 
-                     if str(item.get('item_id', '')) in matching_ids]
+#     # Store results in buffers for further processing
+#     matching_items = [item for item in ctx.deps.item_manifest 
+#                      if str(item.get('item_id', '')) in matching_ids]
     
-    # Store the results in the search buffer
-    ctx.deps.search_buffer = matching_items
+#     # Store the results in the search buffer
+#     ctx.deps.search_buffer = matching_items
     
-    # Store the item IDs in the buffer for get_item_details
-    ctx.deps.item_search_id_buffer = [item.get('item_id') for item in matching_items if 'item_id' in item]
+#     # Store the item IDs in the buffer for get_item_details
+#     ctx.deps.item_search_id_buffer = [item.get('item_id') for item in matching_items if 'item_id' in item]
     
-    return f'Retrieved {len(matching_items)} items matching vector search for "{query}"'
+#     return f'Retrieved {len(matching_items)} items matching vector search for "{query}"'
 
 # Separate agent to ingest items
 ingestion_agent = Agent(
