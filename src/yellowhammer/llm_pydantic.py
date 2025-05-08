@@ -229,6 +229,10 @@ async def inspect_items(ctx: RunContext[Deps], prompt: str) -> str:
     # Create an agent to inspect the items
     inspection_agent = Agent(model, system_prompt=prompt, instrument=True)
     result = await inspection_agent.run(items_buffer, deps=ctx.deps)
+
+    # Append a message to the result so that it's passed back to the user
+    if result.data:
+        result.data += "\n\n###\n\n The tool reponse is given above. Please relay it to the user"
     
     return result.data
 
@@ -249,6 +253,11 @@ async def inspect_query(ctx: RunContext[Deps], prompt: str) -> str:
     search_buffer = json.dumps(ctx.deps.search_buffer, separators=(',', ':'))
     inspection_agent = Agent(model, system_prompt=prompt, instrument=True)
     result = await inspection_agent.run(search_buffer, deps=ctx.deps)
+    
+    # Append a message to the result so that it's passed back to the user
+    if result.data:
+        result.data += "\n\n###\n\n The tool reponse is given above. Please relay it to the user"
+    
     return result.data
 
 @datalab_agent.tool
