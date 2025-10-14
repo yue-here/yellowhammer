@@ -29,10 +29,11 @@ from IPython.core.magic_arguments import (
     parse_argstring,
 )
 from IPython.display import Markdown, HTML
-# from langchain_core.prompts import ChatPromptTemplate
 from datalab_api import DatalabClient
-from .llm_pydantic import datalab_agent, Deps
+from .fulltext_search import FullTextSearchTool
+from .llm import datalab_agent, Deps
 from .prompt import API_PROMPT, SYSTEM_PROMPT
+from .utils import process_prompt_with_images
 import asyncio
 import nest_asyncio
 import pprint
@@ -46,32 +47,14 @@ from io import StringIO
 
 nest_asyncio.apply()
 
-def parse_paths(input_string):
-    # A simple regex pattern to match file-path-like substrings:
-    # [A-Za-z0-9_.\\/-]+\.[A-Za-z0-9_]+
-    #    - one or more letters, digits, underscores, dots, slashes, or dashes,
-    #      containing at least one dot that leads to a plausible extension
-    file_path_pattern = r"([A-Za-z0-9_.\\/-]+\.[A-Za-z0-9_]+)"
-
-    # Find all file paths
-    paths = re.findall(file_path_pattern, input_string)
-
-    # Remove those file paths from the original string
-    remaining_text = re.sub(file_path_pattern, "", input_string)
-
-    # Clean up extra whitespace
-    remaining_text = re.sub(r"\s+", " ", remaining_text).strip()
-
-    return {"text": remaining_text, "paths": paths}
-
-# Class to manage state and expose the main magics
 @magics_class
 class DatalabMagics(Magics):
     def __init__(self, shell):
         super().__init__(shell)
 
         self.messages = None
-        # self.images = []  # Initialize with empty list of images.
+        self.item_manifest = None
+        self.search_tool = None
 
     # A datalab magic that returns a code block
     @magic_arguments()
@@ -94,26 +77,42 @@ class DatalabMagics(Magics):
     @line_cell_magic
     def llm(self, line, cell=None):
         """
-        Multimodal LLM interaction with Jupyter magics
+        Multimodal LLM interaction with Jupyter magics.
+        Supports text prompts and local image files.
         """
-        args = parse_argstring(self.llm, line)  # self.llm is a bound method
+        args = parse_argstring(self.llm, line)
 
-        # Parse the prompt to extract any image paths
+        # Get the prompt
         if cell is None:
             prompt = " ".join(args.prompt)
         else:
             prompt = cell
-        # prompt = parse_paths(prompt)
-        # prompt_text = prompt["text"]
-        # paths = prompt["paths"]  # TODO implement check or make parser only output local paths
 
-        # Run the datalab agent
+        # Process prompt for images and file paths
+        messages, warnings = process_prompt_with_images(prompt)
+        
+        # Display any warnings to the user
+        for warning in warnings:
+            print(f"⚠️  {warning}")
+
+        # Retrieve item manifest using get_items() and initialize search tool if needed
+        if self.item_manifest is None or self.search_tool is None:
+            with DatalabClient(os.getenv("DATALAB_URL")) as client:
+                self.item_manifest = client.get_items(item_type="samples")
+                self.search_tool = FullTextSearchTool(self.item_manifest)
+
+        item_manifest = self.item_manifest
+        search_tool = self.search_tool
+        
+        # Run the datalab agent with processed messages (including images)
         response = datalab_agent.run_sync(
-            prompt,
+            messages,  # May include both text and BinaryContent for images
             deps=Deps(
-                DatalabClient,
-                os.getenv("DATALAB_API_KEY"),
-                os.getenv("DATALAB_URL"),
+                client=DatalabClient,
+                datalab_api_key=os.getenv("DATALAB_API_KEY"),
+                datalab_url=os.getenv("DATALAB_URL"),
+                item_manifest=item_manifest,
+                search_tool=search_tool,
                 ),
             message_history=self.messages,
             model_settings={'temperature': args.temp},
@@ -138,24 +137,3 @@ class DatalabMagics(Magics):
         if hasattr(response.data, 'code'):
             cell_fill = response.data.code
             get_ipython().set_next_input(cell_fill)
-
-
-        #             # generate variable name "image_n" and inject it into a message
-        #             image_variable_name = f"image_{len(self.images)}"
-        #             image_message = [
-        #                 {
-        #                     "type": "image_url",
-        #                     "image_url": {
-        #                         "url": f"data:image/jpeg;base64,{{{image_variable_name}}}"
-        #                     },
-        #                 }
-        #             ]
-        #             self.messages.append(("human", image_message))
-        #         except FileNotFoundError:
-        #             print(f"Error: Could not read image file {path[1]}")
-        #             pass
-
-        #         # Add the image message to the message list
-
-        # # Create a dict from self.images to pass the image data to langchain
-        # image_dict = {f"image_{i+1}": image for i, image in enumerate(self.images)}

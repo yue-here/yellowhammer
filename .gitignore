@@ -164,6 +164,7 @@ cython_debug/
 src/yellowhammer/yue_test.ipynb
 src/yellowhammer/test.ipynb
 examples/Demo_yue.ipynb
+examples/Demo_yue2.ipynb
 examples/yue_examples
 
 # Test notebook
@@ -174,5 +175,10 @@ examples/HL1-5_5-90_30min.xrdml
 prompts/deprecated
 examples/llm_trace.txt
 examples/Demo_anthropic.ipynb
+examples/Demo_multimodal.ipynb
 examples/Demo_openai.ipynb
 examples/Demo_pydantic copy.ipynb
+examples/Demo_pydantic.ipynb
+
+# AI generated docs
+MULTIMODAL*

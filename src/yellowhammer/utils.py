@@ -1,3 +1,148 @@
+import os
+import re
+from pathlib import Path
+from typing import Tuple, List
+
+def parse_file_paths(prompt: str) -> Tuple[str, List[str]]:
+    """
+    Parse a prompt string to extract file paths and return cleaned prompt with paths list.
+    
+    Matches paths that:
+    - Have common file extensions (jpg, jpeg, png, gif, bmp, pdf, txt, etc.)
+    - Can be absolute or relative paths
+    - Can contain common path characters (letters, numbers, underscores, dots, slashes, dashes)
+    
+    Args:
+        prompt: The input prompt string that may contain file paths
+        
+    Returns:
+        Tuple of (cleaned_prompt, list_of_paths)
+    """
+    # Pattern matches file paths with extensions
+    # Supports: alphanumeric, underscores, dots, forward/back slashes, dashes, colons (for absolute paths)
+    # This pattern is more permissive to capture complex paths like /var/folders/...
+    file_path_pattern = r'(?:^|(?<=\s))([A-Za-z0-9_.:~/\\\-]+\.(?:jpg|jpeg|png|gif|bmp|tiff|pdf|txt|doc|docx|xls|xlsx|csv|json|xml|raw|xrdml|xy))(?:(?=\s)|(?=[?!,;.])|$)'
+    
+    # Find all file paths
+    matches = re.finditer(file_path_pattern, prompt, re.IGNORECASE)
+    paths = [match.group(1) for match in matches]
+    
+    # Remove file paths from the prompt
+    cleaned_prompt = re.sub(file_path_pattern, '', prompt, flags=re.IGNORECASE)
+    
+    # Clean up extra whitespace
+    cleaned_prompt = re.sub(r'\s+', ' ', cleaned_prompt).strip()
+    
+    return cleaned_prompt, paths
+
+
+def verify_and_load_image(file_path: str) -> dict | None:
+    """
+    Verify a file path exists and if it's an image, load it as BinaryContent.
+    
+    Args:
+        file_path: Path to the file (relative or absolute)
+        
+    Returns:
+        Dictionary with 'type' and 'content' keys if successful image, None otherwise
+        - For images: {'type': 'image', 'content': BinaryContent object, 'path': str}
+        - For non-images: {'type': 'file', 'path': str} (for future extension)
+        - For non-existent files: None
+    """
+    from pydantic_ai import BinaryContent
+    
+    # Supported image extensions
+    IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}
+    
+    # Convert to Path object for easier manipulation
+    path = Path(file_path)
+    
+    # Check if file exists
+    if not path.exists():
+        return None
+    
+    # Get file extension
+    extension = path.suffix.lower()
+    
+    # Check if it's an image
+    if extension in IMAGE_EXTENSIONS:
+        try:
+            # Read file content
+            data = path.read_bytes()
+            
+            # Map extension to media type
+            media_type_map = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.bmp': 'image/bmp',
+                '.tiff': 'image/tiff',
+                '.webp': 'image/webp'
+            }
+            
+            media_type = media_type_map.get(extension, 'image/jpeg')
+            
+            # Create BinaryContent for the image
+            binary_content = BinaryContent(data=data, media_type=media_type)
+            
+            return {
+                'type': 'image',
+                'content': binary_content,
+                'path': str(path.absolute())
+            }
+        except Exception as e:
+            print(f"Error reading image file {file_path}: {e}")
+            return None
+    else:
+        # For non-image files, return file info for future extension
+        return {
+            'type': 'file',
+            'path': str(path.absolute())
+        }
+
+
+def process_prompt_with_images(prompt: str) -> Tuple[List, List[str]]:
+    """
+    Process a prompt to extract images and construct a message list for the LLM.
+    
+    This function:
+    1. Parses the prompt for file paths
+    2. Verifies file existence
+    3. Loads images as BinaryContent
+    4. Constructs a message list suitable for pydantic-ai agents
+    
+    Args:
+        prompt: The user's prompt string, potentially containing file paths
+        
+    Returns:
+        Tuple of (message_list, warnings)
+        - message_list: List suitable for passing to agent.run() or agent.run_sync()
+        - warnings: List of warning messages about missing or non-image files
+    """
+    # Parse file paths from prompt
+    cleaned_prompt, file_paths = parse_file_paths(prompt)
+    
+    # Initialize message list with the cleaned text prompt
+    messages = [cleaned_prompt] if cleaned_prompt else []
+    warnings = []
+    
+    # Process each detected file path
+    for file_path in file_paths:
+        result = verify_and_load_image(file_path)
+        
+        if result is None:
+            warnings.append(f"File not found: {file_path}")
+        elif result['type'] == 'image':
+            # Add image to messages
+            messages.append(result['content'])
+        elif result['type'] == 'file':
+            # Non-image file - skip for now but could be extended later
+            warnings.append(f"File '{file_path}' is not an image format (skipped for now)")
+    
+    return messages, warnings
+
+
 def process_item_for_chat(item: dict) -> dict:
     """Process an item to make it more suitable for LLM consumption by removing large fields
     and simplifying the structure.
